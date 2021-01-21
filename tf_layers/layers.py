@@ -47,12 +47,21 @@ class AvoidLocalEqualities(tf.keras.layers.Layer):
         return self.random_tensor+input_tensor
 
 class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
+    """ Computes true and false positives and negatives for single keypoint detection task
+    """
     def __init__(self, detection_threshold, min_distance, target_enlargment_size, *args, **kwargs):
         super.__init__(self, *args, **kwargs)
         self.peak_local_max = PeakLocalMax(min_distance=min_distance, threshold_abs=detection_threshold)
         self.avoid_local_eq = AvoidLocalEqualities()
         self.enlarge_target = tf.keras.layers.MaxPool2D(target_enlargment_size, padding="same")
     def call(self, *, batch_target, batch_output):
+        """ 
+            Arguments:
+                batch_target - a [B,H,W,C] tensor
+                batch_output - a [B,H,W,C] tensor
+            Returns:
+                A dictionary of elementary metrics of shape [B,C]
+        """
         batch_output = self.avoid_local_eq(batch_output)
         batch_output = self.peak_local_max(batch_output)
         batch_output = tf.cast(batch_output, tf.int32)
