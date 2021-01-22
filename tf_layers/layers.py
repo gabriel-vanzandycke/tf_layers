@@ -1,5 +1,5 @@
 import tensorflow as tf
-
+import numpy as np
 
 class PeakLocalMax(tf.keras.layers.Layer):
     def __init__(self, min_distance=20, threshold_abs=0.5, *args, **kwargs):
@@ -36,7 +36,7 @@ class PeakLocalMax(tf.keras.layers.Layer):
                 - True: on local maxima of each channel
                 - False: elsewhere.
         """
-        max_pooled = tf.keras.layers.MaxPooling2D(pool_size=2*self.min_distance+1, strides=1, padding="SAME")(batch_heatmap)
+        max_pooled = tf.keras.layers.MaxPool2D(pool_size=2*self.min_distance+1, strides=1, padding="SAME")(batch_heatmap)
         return tf.logical_and(tf.equal(batch_heatmap, max_pooled), tf.greater(batch_heatmap, self.threshold_abs))
 
 
@@ -50,11 +50,11 @@ class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
     """ Computes true and false positives and negatives for single keypoint detection task
     """
     def __init__(self, detection_threshold, min_distance, target_enlargment_size, *args, **kwargs):
-        super.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.peak_local_max = PeakLocalMax(min_distance=min_distance, threshold_abs=detection_threshold)
         self.avoid_local_eq = AvoidLocalEqualities()
-        self.enlarge_target = tf.keras.layers.MaxPool2D(target_enlargment_size, padding="same")
-    def call(self, *, batch_target, batch_output):
+        self.enlarge_target = tf.keras.layers.MaxPool2D(target_enlargment_size, strides=1, padding="same")
+    def call(self, batch_target, batch_output):
         """ 
             Arguments:
                 batch_target - a [B,H,W,C] tensor
@@ -174,7 +174,7 @@ class AvgSPP(tf.keras.layers.Layer):
 
 
 class Dilation2D(tf.keras.layers.Layer):
-    def __init__(self, kernel: np:ndarray):
+    def __init__(self, kernel: np.ndarray):
         self.kernel = tf.constant(kernel[np.newaxis,::,np.newaxis])
     def build(self, input_shape):
         assert len(input_shape) == 4, "Invalid shape for input. Expected a 4 dimentional tensor. Recieved {}".format(input.get_shape())
@@ -185,47 +185,47 @@ class Dilation2D(tf.keras.layers.Layer):
 
 
 
-class FocalLoss(ChunkProcessor):
-    def __init__(self, alpha=0.25, gamma=2):
-        """Compute focal loss for predictions.
-            Multi-labels Focal loss formula:
-                FL = -alpha * (z-p)^gamma * log(p) -(1-alpha) * p^gamma * log(1-p)
-                        ,which alpha = 0.25, gamma = 2, p = sigmoid(x), z = target_tensor.
-        Args:
-            alpha: A scalar tensor for focal loss alpha hyper-parameter
-            gamma: A scalar tensor for focal loss gamma hyper-parameter
-        Returns:
-            loss: A (scalar) tensor representing the value of the loss function
-        """
-        self.alpha = alpha
-        self.gamma = gamma
+# class FocalLoss(ChunkProcessor):
+#     def __init__(self, alpha=0.25, gamma=2):
+#         """Compute focal loss for predictions.
+#             Multi-labels Focal loss formula:
+#                 FL = -alpha * (z-p)^gamma * log(p) -(1-alpha) * p^gamma * log(1-p)
+#                         ,which alpha = 0.25, gamma = 2, p = sigmoid(x), z = target_tensor.
+#         Args:
+#             alpha: A scalar tensor for focal loss alpha hyper-parameter
+#             gamma: A scalar tensor for focal loss gamma hyper-parameter
+#         Returns:
+#             loss: A (scalar) tensor representing the value of the loss function
+#         """
+#         self.alpha = alpha
+#         self.gamma = gamma
 
-    def __call__(self, chunk):
-        """
-        prediction_tensor: A float tensor of shape [batch_size, num_anchors, num_classes] representing the predicted logits for each class
-        target_tensor: A float tensor of shape [batch_size, num_anchors, num_classes] representing one-hot encoded classification targets
-        """
-        prediction_tensor = chunk["batch_logits"]
-        target_tensor = chunk["one-hot"]#tf.one_hot(chunk["batch_target"], chunk["classes"])
+#     def __call__(self, chunk):
+#         """
+#         prediction_tensor: A float tensor of shape [batch_size, num_anchors, num_classes] representing the predicted logits for each class
+#         target_tensor: A float tensor of shape [batch_size, num_anchors, num_classes] representing one-hot encoded classification targets
+#         """
+#         prediction_tensor = chunk["batch_logits"]
+#         target_tensor = chunk["one-hot"]#tf.one_hot(chunk["batch_target"], chunk["classes"])
 
-        sigmoid_p = tf.nn.sigmoid(prediction_tensor)
-        zeros = array_ops.zeros_like(sigmoid_p, dtype=sigmoid_p.dtype)
+#         sigmoid_p = tf.nn.sigmoid(prediction_tensor)
+#         zeros = array_ops.zeros_like(sigmoid_p, dtype=sigmoid_p.dtype)
         
-        # For poitive prediction, only need consider front part loss, back part is 0;
-        # target_tensor > zeros <=> z=1, so poitive coefficient = z - p.
-        pos_p_sub = array_ops.where(target_tensor > zeros, target_tensor - sigmoid_p, zeros)
+#         # For poitive prediction, only need consider front part loss, back part is 0;
+#         # target_tensor > zeros <=> z=1, so poitive coefficient = z - p.
+#         pos_p_sub = array_ops.where(target_tensor > zeros, target_tensor - sigmoid_p, zeros)
         
-        # For negative prediction, only need consider back part loss, front part is 0;
-        # target_tensor > zeros <=> z=1, so negative coefficient = 0.
-        neg_p_sub = array_ops.where(target_tensor > zeros, zeros, sigmoid_p)
-        per_entry_cross_ent = - self.alpha * (pos_p_sub ** self.gamma) * tf.log(tf.clip_by_value(sigmoid_p, 1e-8, 1.0)) \
-                            - (1 - self.alpha) * (neg_p_sub ** self.gamma) * tf.log(tf.clip_by_value(1.0 - sigmoid_p, 1e-8, 1.0))
-        return tf.reduce_sum(per_entry_cross_ent)
+#         # For negative prediction, only need consider back part loss, front part is 0;
+#         # target_tensor > zeros <=> z=1, so negative coefficient = 0.
+#         neg_p_sub = array_ops.where(target_tensor > zeros, zeros, sigmoid_p)
+#         per_entry_cross_ent = - self.alpha * (pos_p_sub ** self.gamma) * tf.log(tf.clip_by_value(sigmoid_p, 1e-8, 1.0)) \
+#                             - (1 - self.alpha) * (neg_p_sub ** self.gamma) * tf.log(tf.clip_by_value(1.0 - sigmoid_p, 1e-8, 1.0))
+#         return tf.reduce_sum(per_entry_cross_ent)
 
 
 
-def gaussian_kernel(size: int, mean: float, std: float):
-    vals = tfp.distributions.Normal(mean, std).prob(tf.range(start=-size, limit=size+1, dtype=tf.float32))
-    kernel = tf.einsum('i,j->ij', vals, vals)
-    return kernel/tf.reduce_sum(kernel)
+# def gaussian_kernel(size: int, mean: float, std: float):
+#     vals = tfp.distributions.Normal(mean, std).prob(tf.range(start=-size, limit=size+1, dtype=tf.float32))
+#     kernel = tf.einsum('i,j->ij', vals, vals)
+#     return kernel/tf.reduce_sum(kernel)
 
