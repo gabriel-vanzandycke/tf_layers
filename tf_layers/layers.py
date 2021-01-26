@@ -21,7 +21,8 @@ class PeakLocalMax(tf.keras.layers.Layer):
         self.min_distance = min_distance
         self.threshold_abs = threshold_abs
         super().__init__(*args, **kwargs)
-
+    def get_config(self):
+        return {"min_distance": self.min_distance, "threshold_abs": self.threshold_abs}
     def build(self, input_shape):
         assert len(input_shape) == 4, "Expecting a 4 dimensional tensor. Received {}".format(input_shape)
 
@@ -41,6 +42,8 @@ class PeakLocalMax(tf.keras.layers.Layer):
 
 
 class AvoidLocalEqualities(tf.keras.layers.Layer):
+    def get_config(self):
+        return {}
     def build(self, input_shape):
         self.random_tensor = tf.expand_dims(tf.random.normal(input_shape[1:], mean=0, stddev=0.001), 0)
     def call(self, input_tensor):
@@ -54,6 +57,13 @@ class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
         self.peak_local_max = PeakLocalMax(min_distance=min_distance, threshold_abs=detection_threshold)
         self.avoid_local_eq = AvoidLocalEqualities()
         self.enlarge_target = tf.keras.layers.MaxPool2D(target_enlargment_size, strides=1, padding="same")
+    def get_config(self):
+        peak_local_max_config = self.peak_local_max.get_config()
+        return {
+            "detection_threshold": peak_local_max_config["threshold_abs"],
+            "min_distance": peak_local_max_config["min_distance"],
+            "target_enlargment_size": self.enlarge_target.get_config()["pool_size"][0]
+        }
     def call(self, batch_target, batch_output):
         """ 
             Arguments:
@@ -91,6 +101,7 @@ class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
         max_target = tf.reduce_max(batch_target, axis=[1,2])
         batch_TN = (1-max_output) * (1-max_target)
         batch_FN = max_target - tf.reduce_max(TP_map, axis=[1,2])
+        
         return {
             "batch_TP": batch_TP,
             "batch_FP": batch_FP,
@@ -122,21 +133,27 @@ class SingleKeypointDetectionMetrics(tf.keras.metrics.Metric):
         return precision, recall
         
 
+# https://stackoverflow.com/questions/62793043/tensorflow-implementation-of-nt-xent-contrastive-loss-function
+# https://github.com/margokhokhlova/NT_Xent_loss_tensorflow/blob/master/contrastive_loss.py
+# https://amitness.com/2020/03/illustrated-simclr/
 class NT_Xent(tf.keras.layers.Layer):
     """ Normalized temperature-scaled CrossEntropy loss [1]
         [1] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton, “A simple framework for contrastive learning of visual representations,” arXiv. 2020, Accessed: Jan. 15, 2021. [Online]. Available: https://github.com/google-research/simclr.
     """
-    def __init__(self, tau=1, *args, **kwargs):
+    def __init__(self, tau=1, normalize=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.tau = tau
+        self.normalize = normalize
         self.similarity = tf.keras.losses.CosineSimilarity(axis=-1, reduction=tf.keras.losses.Reduction.NONE)
         self.criterion = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
     def get_config(self):
-        return {"tau": self.tau}
+        return {"tau": self.tau, "normalize": self.normalize}
     def call(self, zizj):
         """ zizj is [B,N] tensor with order z_i1 z_j1 z_i2 z_j2 z_i3 z_j3 ... 
             batch_size is twice the original batch_size
         """
+        if self.normalize:
+            zizj = tf.math.l2_normalize(zizj, axis=1)
         batch_size = tf.shape(zizj)[0]
         mask = tf.repeat(tf.repeat(~tf.eye(batch_size/2, dtype=tf.bool), 2, axis=0), 2, axis=1)
 
@@ -174,13 +191,16 @@ class AvgSPP(tf.keras.layers.Layer):
 
 
 class Dilation2D(tf.keras.layers.Layer):
-    def __init__(self, kernel: np.ndarray):
-        self.kernel = tf.constant(kernel[np.newaxis,::,np.newaxis])
+    def __init__(self, kernel: np.ndarray, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.kernel = tf.constant(kernel[:,:,np.newaxis])
+    def get_config(self):
+        return {"kernel": self.kernel[:,:,0].numpy}
     def build(self, input_shape):
-        assert len(input_shape) == 4, "Invalid shape for input. Expected a 4 dimentional tensor. Recieved {}".format(input.get_shape())
+        assert len(input_shape) == 4, "Invalid shape for input. Expected a 4 dimentional tensor. Recieved {}".format(input_shape)
     def call(self, input_tensor):
-        kernel = tf.cast(kernel, input_tensor.dtype)
-        output = tf.nn.dilation2d(input_tensor, filter=kernel, strides=(1,1,1,1), rates=(1,1,1,1), padding="SAME")
+        kernel = tf.cast(self.kernel, input_tensor.dtype)
+        output = tf.nn.dilation2d(input_tensor, filters=kernel, strides=(1,1,1,1), dilations=(1,1,1,1), padding="SAME", data_format="NHWC")
         return output - tf.ones_like(output)
 
 
