@@ -1,6 +1,20 @@
 import tensorflow as tf
 import numpy as np
 
+class GammaColorAugmentation(tf.keras.layers.Layer):
+    def __init__(self, stddev, **kwargs):
+        super().__init__(**kwargs)
+        self.depth = len(stddev)
+        self.stddev = stddev
+    def get_config(self):
+        return {"stddev": self.stddev}
+    def call(self, input_tensor):
+        # Random values are sampled at each call
+        gammas = tf.random.normal(shape=(self.depth,), mean=0., stddev=1.)*self.stddev+tf.constant([1.]*self.depth)
+        return tf.pow(input_tensor, 1/tf.cast(gammas, input_tensor.dtype))
+
+
+
 class PeakLocalMax(tf.keras.layers.Layer):
     def __init__(self, min_distance=20, threshold_abs=0.5, *args, **kwargs):
         """ Find peaks in a batch of images as boolean mask. Peaks are the local
@@ -65,8 +79,7 @@ class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
             "target_enlargment_size": self.enlarge_target.get_config()["pool_size"][0]
         }
     def call(self, batch_target, batch_output):
-        """ 
-            Arguments:
+        """ Arguments:
                 batch_target - a [B,H,W,C] tensor
                 batch_output - a [B,H,W,C] tensor
             Returns:
@@ -101,7 +114,7 @@ class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
         max_target = tf.reduce_max(batch_target, axis=[1,2])
         batch_TN = (1-max_output) * (1-max_target)
         batch_FN = max_target - tf.reduce_max(TP_map, axis=[1,2])
-        
+
         return {
             "batch_TP": batch_TP,
             "batch_FP": batch_FP,
@@ -131,7 +144,7 @@ class SingleKeypointDetectionMetrics(tf.keras.metrics.Metric):
         precision = self.true_positives/(self.true_positives+self.false_positives)
         recall = self.true_positives/(self.true_positives+self.false_negatives)
         return precision, recall
-        
+
 
 # https://stackoverflow.com/questions/62793043/tensorflow-implementation-of-nt-xent-contrastive-loss-function
 # https://github.com/margokhokhlova/NT_Xent_loss_tensorflow/blob/master/contrastive_loss.py
@@ -140,32 +153,29 @@ class NT_Xent(tf.keras.layers.Layer):
     """ Normalized temperature-scaled CrossEntropy loss [1]
         [1] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton, “A simple framework for contrastive learning of visual representations,” arXiv. 2020, Accessed: Jan. 15, 2021. [Online]. Available: https://github.com/google-research/simclr.
     """
-    def __init__(self, tau=1, normalize=False, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, tau=1, **kwargs):
+        super().__init__(**kwargs)
         self.tau = tau
-        self.normalize = normalize
         self.similarity = tf.keras.losses.CosineSimilarity(axis=-1, reduction=tf.keras.losses.Reduction.NONE)
         self.criterion = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
     def get_config(self):
-        return {"tau": self.tau, "normalize": self.normalize}
+        return {"tau": self.tau}
     def call(self, zizj):
         """ zizj is [B,N] tensor with order z_i1 z_j1 z_i2 z_j2 z_i3 z_j3 ... 
             batch_size is twice the original batch_size
         """
-        if self.normalize:
-            zizj = tf.math.l2_normalize(zizj, axis=1)
         batch_size = tf.shape(zizj)[0]
         mask = tf.repeat(tf.repeat(~tf.eye(batch_size/2, dtype=tf.bool), 2, axis=0), 2, axis=1)
 
-        sim = -self.similarity(tf.expand_dims(zizj, 1), tf.expand_dims(zizj, 0))
-        sim_i_j = -self.similarity(zizj[0::2], zizj[1::2])
-        
+        sim = -1*self.similarity(tf.expand_dims(zizj, 1), tf.expand_dims(zizj, 0))/self.tau
+        sim_i_j = -1*self.similarity(zizj[0::2], zizj[1::2])/self.tau
+
         pos = tf.reshape(tf.repeat(sim_i_j, repeats=2), (batch_size, -1))
         neg = tf.reshape(sim[mask], (batch_size, -1))
 
         logits = tf.concat((pos, neg), axis=-1)
         labels = tf.one_hot(tf.zeros((batch_size,), dtype=tf.int32), depth=batch_size-1)
-        
+
         return self.criterion(labels, logits)
 
 
@@ -191,8 +201,8 @@ class AvgSPP(tf.keras.layers.Layer):
 
 
 class Dilation2D(tf.keras.layers.Layer):
-    def __init__(self, kernel: np.ndarray, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, kernel: np.ndarray, **kwargs):
+        super().__init__(**kwargs)
         self.kernel = tf.constant(kernel[:,:,np.newaxis])
     def get_config(self):
         return {"kernel": self.kernel[:,:,0].numpy}
@@ -230,11 +240,11 @@ class Dilation2D(tf.keras.layers.Layer):
 
 #         sigmoid_p = tf.nn.sigmoid(prediction_tensor)
 #         zeros = array_ops.zeros_like(sigmoid_p, dtype=sigmoid_p.dtype)
-        
+
 #         # For poitive prediction, only need consider front part loss, back part is 0;
 #         # target_tensor > zeros <=> z=1, so poitive coefficient = z - p.
 #         pos_p_sub = array_ops.where(target_tensor > zeros, target_tensor - sigmoid_p, zeros)
-        
+
 #         # For negative prediction, only need consider back part loss, front part is 0;
 #         # target_tensor > zeros <=> z=1, so negative coefficient = 0.
 #         neg_p_sub = array_ops.where(target_tensor > zeros, zeros, sigmoid_p)
