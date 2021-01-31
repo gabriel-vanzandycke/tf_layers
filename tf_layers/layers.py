@@ -2,16 +2,18 @@ import tensorflow as tf
 import numpy as np
 
 class GammaColorAugmentation(tf.keras.layers.Layer):
-    def __init__(self, stddev, **kwargs):
+    def __init__(self, stddev, seed=0, **kwargs):
         super().__init__(**kwargs)
         self.depth = len(stddev)
+        self.seed = seed
         self.stddev = stddev
     def get_config(self):
-        return {"stddev": self.stddev}
+        return {"stddev": self.stddev, "seed": self.seed}
     def call(self, input_tensor):
+        batch_size = tf.shape(input_tensor)[0]
         # Random values are sampled at each call
-        gammas = tf.random.normal(shape=(self.depth,), mean=0., stddev=1.)*self.stddev+tf.constant([1.]*self.depth)
-        return tf.pow(input_tensor, 1/tf.cast(gammas, input_tensor.dtype))
+        gammas = tf.random.normal(shape=(batch_size, self.depth), mean=0., stddev=1., seed=self.seed)*self.stddev+tf.constant([1.]*self.depth)
+        return tf.pow(input_tensor, 1/tf.cast(gammas, input_tensor.dtype)[:,tf.newaxis, tf.newaxis,:])
 
 
 
@@ -146,7 +148,6 @@ class SingleKeypointDetectionMetrics(tf.keras.metrics.Metric):
         return precision, recall
 
 
-# https://stackoverflow.com/questions/62793043/tensorflow-implementation-of-nt-xent-contrastive-loss-function
 # https://github.com/margokhokhlova/NT_Xent_loss_tensorflow/blob/master/contrastive_loss.py
 # https://amitness.com/2020/03/illustrated-simclr/
 class NT_Xent(tf.keras.layers.Layer):
