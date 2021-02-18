@@ -154,15 +154,16 @@ class NT_Xent(tf.keras.layers.Layer):
     """ Normalized temperature-scaled CrossEntropy loss [1]
         [1] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton, “A simple framework for contrastive learning of visual representations,” arXiv. 2020, Accessed: Jan. 15, 2021. [Online]. Available: https://github.com/google-research/simclr.
     """
-    def __init__(self, tau=1, **kwargs):
+    def __init__(self, tau=1, compute_accuracy=False, **kwargs):
         super().__init__(**kwargs)
         self.tau = tau
         self.similarity = tf.keras.losses.CosineSimilarity(axis=-1, reduction=tf.keras.losses.Reduction.NONE)
         self.criterion = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+        self.compute_accuracy = compute_accuracy
     def get_config(self):
-        return {"tau": self.tau}
+        return {"tau": self.tau, "compute_accuracy": self.compute_accuracy}
     def call(self, zizj):
-        """ zizj is [B,N] tensor with order z_i1 z_j1 z_i2 z_j2 z_i3 z_j3 ... 
+        """ zizj is [B,N] tensor with order z_i1 z_j1 z_i2 z_j2 z_i3 z_j3 ...
             batch_size is twice the original batch_size
         """
         batch_size = tf.shape(zizj)[0]
@@ -177,7 +178,10 @@ class NT_Xent(tf.keras.layers.Layer):
         logits = tf.concat((pos, neg), axis=-1)
         labels = tf.one_hot(tf.zeros((batch_size,), dtype=tf.int32), depth=batch_size-1)
 
-        return self.criterion(labels, logits)
+        loss = self.criterion(labels, logits)
+        accuracy = tf.equal(tf.math.argmax(logits, axis=-1), tf.math.argmax(labels, axis=-1))
+
+        return (loss, accuracy) if self.compute_accuracy else loss
 
 
 class AvgSPP(tf.keras.layers.Layer):
@@ -259,4 +263,6 @@ class Dilation2D(tf.keras.layers.Layer):
 #     vals = tfp.distributions.Normal(mean, std).prob(tf.range(start=-size, limit=size+1, dtype=tf.float32))
 #     kernel = tf.einsum('i,j->ij', vals, vals)
 #     return kernel/tf.reduce_sum(kernel)
+
+
 
