@@ -8,7 +8,7 @@ setup(
     licence="LGPL",
     python_requires='>=3.6',
     description="Some tensorflow layers",
-    version='1',
+    version='0.0.2',
     packages=find_packages(),
     install_requires=[
         "tensorflow"
