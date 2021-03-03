@@ -16,12 +16,20 @@ class GammaColorAugmentation(tf.keras.layers.Layer):
         return tf.pow(input_tensor, 1/tf.cast(gammas, input_tensor.dtype)[:,tf.newaxis, tf.newaxis,:])
 
 
+class AvoidLocalEqualities(tf.keras.layers.Layer):
+    def get_config(self):
+        return {}
+    def build(self, input_shape):
+        self.random_tensor = tf.expand_dims(tf.random.normal(input_shape[1:], mean=0, stddev=0.001), 0)
+    def call(self, input_tensor):
+        return self.random_tensor+input_tensor
 
 class PeakLocalMax(tf.keras.layers.Layer):
-    def __init__(self, min_distance=20, threshold_abs=0.5, *args, **kwargs):
-        """ Find peaks in a batch of images as boolean mask. Peaks are the local
+    def __init__(self, min_distance:int, thresholds:np.ndarray, *args, **kwargs):
+        """ Find peaks in a batch of images as boolean masks. Peaks are the local
             maxima in a region of 2 * min_distance + 1 (i.e. peaks are separated
-            by at least min_distance).
+            by at least min_distance) standing above the given thresholds.
+            Multiple threshold can be provided to create ROC curves.
 
             If there are multiple local maxima with identical pixel intensities
             inside the region defined with min_distance, the coordinates of all
@@ -32,16 +40,16 @@ class PeakLocalMax(tf.keras.layers.Layer):
                 in a region of 2 * min_distance + 1 (i.e. peaks are separated by
                 at least min_distance). To find all the local maxima, use
                 min_distance=1).
-                - threshold_abs (float): Minimum intensity of peaks.
+                - thresholds (np.ndarray): Minimum intensity of peaks. One
+                boolean mask is returned by threshold value.
         """
         self.min_distance = min_distance
-        self.threshold_abs = threshold_abs
+        self.thresholds = thresholds
         super().__init__(*args, **kwargs)
     def get_config(self):
-        return {"min_distance": self.min_distance, "threshold_abs": self.threshold_abs}
+        return {"min_distance": self.min_distance, "thresholds": self.thresholds}
     def build(self, input_shape):
         assert len(input_shape) == 4, "Expecting a 4 dimensional tensor. Received {}".format(input_shape)
-
     def call(self, batch_heatmap):
         """ Performs the peak-local-max operation on batch_heatmap.
 
@@ -49,49 +57,53 @@ class PeakLocalMax(tf.keras.layers.Layer):
                 - batch_heatmap: a float32 tensor of shape [B,H,W,C] in [0,1]
                 containing B images of width W and height H with C channels.
             Returns:
-                Returns a boolean tensor of shape [B,H,W,C] with
+                Returns a boolean tensor of shape [B,H,W,C,N] where N is the
+                length of the threshold array, with
                 - True: on local maxima of each channel
                 - False: elsewhere.
         """
         max_pooled = tf.keras.layers.MaxPool2D(pool_size=2*self.min_distance+1, strides=1, padding="SAME")(batch_heatmap)
-        return tf.logical_and(tf.equal(batch_heatmap, max_pooled), tf.greater(batch_heatmap, self.threshold_abs))
+        return tf.logical_and(tf.equal(batch_heatmap, max_pooled)[..., tf.newaxis], tf.greater(batch_heatmap[..., tf.newaxis], self.thresholds))
 
+class ComputeElementaryMetrics(tf.keras.layers.Layer):
+    """ Computes the elementary detection metrics given a map of ball
+        candidates and a target map.
 
-class AvoidLocalEqualities(tf.keras.layers.Layer):
+        The elementary metrics are:
+            - 1 true-positive (TP) for each candidate where there is a ball
+            - 1 false-positive (FP) for each candidate wehere there is no ball
+            - 1 true-negative (TN) for each image without any ball and any candidates
+            - 1 false-negative (FN) for each ball that is not detected by a candidate
+    """
     def get_config(self):
         return {}
-    def build(self, input_shape):
-        self.random_tensor = tf.expand_dims(tf.random.normal(input_shape[1:], mean=0, stddev=0.001), 0)
-    def call(self, input_tensor):
-        return self.random_tensor+input_tensor
-
-class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
-    """ Computes true and false positives and negatives for single keypoint detection task
-    """
-    def __init__(self, detection_threshold, min_distance, target_enlargment_size, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.peak_local_max = PeakLocalMax(min_distance=min_distance, threshold_abs=detection_threshold)
-        self.avoid_local_eq = AvoidLocalEqualities()
-        self.enlarge_target = tf.keras.layers.MaxPool2D(target_enlargment_size, strides=1, padding="same")
-    def get_config(self):
-        peak_local_max_config = self.peak_local_max.get_config()
-        return {
-            "detection_threshold": peak_local_max_config["threshold_abs"],
-            "min_distance": peak_local_max_config["min_distance"],
-            "target_enlargment_size": self.enlarge_target.get_config()["pool_size"][0]
-        }
-    def call(self, batch_target, batch_output):
-        """ Arguments:
-                batch_target - a [B,H,W,C] tensor
-                batch_output - a [B,H,W,C] tensor
-            Returns:
-                A dictionary of elementary metrics of shape [B,C]
+    def call(self, batch_hitmap, batch_target):
         """
-        batch_output = self.avoid_local_eq(batch_output)
-        batch_output = self.peak_local_max(batch_output)
-        batch_output = tf.cast(batch_output, tf.int32)
-        batch_target = self.enlarge_target(batch_target)
-        batch_target = tf.cast(batch_target, tf.int32)
+            Performs the elementary metrics computation on the batch given
+            batch_hitmap and batch_target.
+
+            Arguments:
+                - batch_hitmap: a uint8 tensor of shape [B,H,W,...] in {0,1}
+                containing B maps of candidates of width W and height H. It has
+                1s for each ball candidate and 0s elsewhere.
+                - batch_target: a uint8 tensor of shape [B,H,W,...] in {0,1}
+                containing B targets corresponding to the WxH input images. It
+                has 1s where there is a ball and 0s elsewhere.
+            
+            Returns:
+                Returns a dictionary of [B,...] tensors containing the number of
+                TP, FP, TN and FN for each element of the batch.
+        """
+
+        TP_map = tf.multiply(batch_target, batch_hitmap)
+        FP_map = tf.multiply(1-batch_target, batch_hitmap)
+        batch_TP = tf.reduce_sum(TP_map, axis=[1,2])
+        batch_FP = tf.reduce_sum(FP_map, axis=[1,2])
+
+        max_output = tf.reduce_max(batch_hitmap, axis=[1,2])
+        max_target = tf.reduce_max(batch_target, axis=[1,2])
+        batch_TN = (1-max_output) * (1-max_target)
+        batch_FN = max_target - tf.reduce_max(TP_map, axis=[1,2])
 
         """                  1 FN        1 FP + 1 FN        1 TP           1 FP          1 TN
             output        ___________    ________|__    ______|____    ______|____    ___________
@@ -107,22 +119,17 @@ class SingleKeypointDetectionMetricsLayer(tf.keras.layers.Layer):
             batch_TN     (1-0)*(1-1)=0  (1-1)*(1-1)=0  (1-1)*(1-1)=0  (1-1)*(1-0)*0  (1-0)*(1-0)=1
             batch_FN         1-0=1          1-0=1          1-1=0          0-0=0          0-0=0
         """
-        TP_map = tf.multiply(batch_target, batch_output)
-        FP_map = tf.multiply(1-batch_target, batch_output)
-        batch_TP = tf.reduce_sum(TP_map, axis=[1,2])
-        batch_FP = tf.reduce_sum(FP_map, axis=[1,2])
-
-        max_output = tf.reduce_max(batch_output, axis=[1,2])
-        max_target = tf.reduce_max(batch_target, axis=[1,2])
-        batch_TN = (1-max_output) * (1-max_target)
-        batch_FN = max_target - tf.reduce_max(TP_map, axis=[1,2])
 
         return {
-            "batch_TP": batch_TP,
-            "batch_FP": batch_FP,
-            "batch_TN": batch_TN,
-            "batch_FN": batch_FN,
+            "batch_TP": tf.cast(batch_TP, tf.int32),
+            "batch_FP": tf.cast(batch_FP, tf.int32),
+            "batch_TN": tf.cast(batch_TN, tf.int32),
+            "batch_FN": tf.cast(batch_FN, tf.int32),
         }
+
+
+
+
 
 
 class SingleKeypointDetectionMetrics(tf.keras.metrics.Metric):
