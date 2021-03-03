@@ -17,6 +17,10 @@ class GammaColorAugmentation(tf.keras.layers.Layer):
 
 
 class AvoidLocalEqualities(tf.keras.layers.Layer):
+    """
+        Avoid local equalities by adding a random (constant) tensor to the input tensor.
+        The random values are sampled on a normal of mean 0 and standard deviation 0.001.
+    """
     def get_config(self):
         return {}
     def build(self, input_shape):
@@ -26,7 +30,8 @@ class AvoidLocalEqualities(tf.keras.layers.Layer):
 
 class PeakLocalMax(tf.keras.layers.Layer):
     def __init__(self, min_distance:int, thresholds:np.ndarray, *args, **kwargs):
-        """ Find peaks in a batch of images as boolean masks. Peaks are the local
+        """
+            Find peaks in a batch of images as boolean masks. Peaks are the local
             maxima in a region of 2 * min_distance + 1 (i.e. peaks are separated
             by at least min_distance) standing above the given thresholds.
             Multiple threshold can be provided to create ROC curves.
@@ -89,7 +94,7 @@ class ComputeElementaryMetrics(tf.keras.layers.Layer):
                 - batch_target: a uint8 tensor of shape [B,H,W,...] in {0,1}
                 containing B targets corresponding to the WxH input images. It
                 has 1s where there is a ball and 0s elsewhere.
-            
+
             Returns:
                 Returns a dictionary of [B,...] tensors containing the number of
                 TP, FP, TN and FN for each element of the batch.
