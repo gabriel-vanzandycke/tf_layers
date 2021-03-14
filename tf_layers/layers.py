@@ -105,18 +105,18 @@ class ComputeElementaryMetrics(tf.keras.layers.Layer):
         batch_TP = tf.reduce_sum(TP_map, axis=[1,2])
         batch_FP = tf.reduce_sum(FP_map, axis=[1,2])
 
-        max_output = tf.reduce_max(batch_hitmap, axis=[1,2])
+        max_hitmap = tf.reduce_max(batch_hitmap, axis=[1,2])
         max_target = tf.reduce_max(batch_target, axis=[1,2])
-        batch_TN = (1-max_output) * (1-max_target)
+        batch_TN = (1-max_hitmap) * (1-max_target)
         batch_FN = max_target - tf.reduce_max(TP_map, axis=[1,2])
 
         """                  1 FN        1 FP + 1 FN        1 TP           1 FP          1 TN
-            output        ___________    ________|__    ______|____    ______|____    ___________
+            hitmap        ___________    ________|__    ______|____    ______|____    ___________
             target        _______█___    ____█______    ______█____    ___________    ___________
             -------------------------------------------------------------------------------------------
             TP_map        ___________    ___________    ______|____    ___________    ___________
             FP_map        ___________    ________|__    ___________    ______|____    ___________
-            max(output)        0              1              1              1              0
+            max(hitmap)        0              1              1              1              0
             max(target)        1              1              1              0              0
             -------------------------------------------------------------------------------------------
             batch_TP           0              0              1              0              0
