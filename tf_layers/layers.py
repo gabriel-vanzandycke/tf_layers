@@ -49,7 +49,7 @@ class PeakLocalMax(tf.keras.layers.Layer):
                 boolean mask is returned by threshold value.
         """
         self.min_distance = min_distance
-        self.thresholds = thresholds
+        self.thresholds = tf.convert_to_tensor(thresholds, dtype=tf.float32)
         super().__init__(*args, **kwargs)
     def get_config(self):
         return {"min_distance": self.min_distance, "thresholds": self.thresholds}
@@ -137,27 +137,27 @@ class ComputeElementaryMetrics(tf.keras.layers.Layer):
 
 
 
-class SingleKeypointDetectionMetrics(tf.keras.metrics.Metric):
-    def __init__(self, detection_threshold, min_distance, target_enlargment_size, name='keypoint-detection-accuracy', **kwargs):
-        super().__init__(name=name, **kwargs)
-        self.true_positives = self.add_weight(name='tp', initializer='zeros')
-        self.true_negatives = self.add_weight(name='tn', initializer='zeros')
-        self.false_positives = self.add_weight(name='fp', initializer='zeros')
-        self.false_negatives = self.add_weight(name='fn', initializer='zeros')
-        self.metrics_computation = SingleKeypointDetectionMetricsLayer(detection_threshold, min_distance, target_enlargment_size)
+# class SingleKeypointDetectionMetrics(tf.keras.metrics.Metric):
+#     def __init__(self, detection_threshold, min_distance, target_enlargment_size, name='keypoint-detection-accuracy', **kwargs):
+#         super().__init__(name=name, **kwargs)
+#         self.true_positives = self.add_weight(name='tp', initializer='zeros')
+#         self.true_negatives = self.add_weight(name='tn', initializer='zeros')
+#         self.false_positives = self.add_weight(name='fp', initializer='zeros')
+#         self.false_negatives = self.add_weight(name='fn', initializer='zeros')
+#         self.metrics_computation = SingleKeypointDetectionMetricsLayer(detection_threshold, min_distance, target_enlargment_size)
 
-    def update_state(self, batch_target, batch_output, sample_weight=None):
-        metrics = self.metrics_computation(batch_target=batch_target, batch_output=batch_output)
-        # TODO: split the different channels if any
-        self.true_positives.assign_add(tf.reduce_sum(metrics["batch_TP"]))
-        self.false_positives.assign_add(tf.reduce_sum(metrics["batch_FP"]))
-        self.true_negatives.assign_add(tf.reduce_sum(metrics["batch_TN"]))
-        self.false_negatives.assign_add(tf.reduce_sum(metrics["batch_FN"]))
+#     def update_state(self, batch_target, batch_output, sample_weight=None):
+#         metrics = self.metrics_computation(batch_target=batch_target, batch_output=batch_output)
+#         # TODO: split the different channels if any
+#         self.true_positives.assign_add(tf.reduce_sum(metrics["batch_TP"]))
+#         self.false_positives.assign_add(tf.reduce_sum(metrics["batch_FP"]))
+#         self.true_negatives.assign_add(tf.reduce_sum(metrics["batch_TN"]))
+#         self.false_negatives.assign_add(tf.reduce_sum(metrics["batch_FN"]))
 
-    def result(self):
-        precision = self.true_positives/(self.true_positives+self.false_positives)
-        recall = self.true_positives/(self.true_positives+self.false_negatives)
-        return precision, recall
+#     def result(self):
+#         precision = self.true_positives/(self.true_positives+self.false_positives)
+#         recall = self.true_positives/(self.true_positives+self.false_negatives)
+#         return precision, recall
 
 
 # https://github.com/margokhokhlova/NT_Xent_loss_tensorflow/blob/master/contrastive_loss.py
