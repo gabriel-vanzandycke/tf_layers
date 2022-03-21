@@ -9,7 +9,9 @@ class GammaColorAugmentation(tf.keras.layers.Layer):
         self.stddev = stddev
     def get_config(self):
         return {"stddev": self.stddev, "seed": self.seed}
-    def call(self, input_tensor):
+    def call(self, input_tensor, training=True):
+        if not training:
+            return input_tensor
         batch_size = tf.shape(input_tensor)[0]
         # Random values are sampled at each call
         gammas = tf.random.normal(shape=(batch_size, self.depth), mean=0., stddev=1., seed=self.seed)*self.stddev+tf.constant([1.]*self.depth)
@@ -17,21 +19,18 @@ class GammaColorAugmentation(tf.keras.layers.Layer):
 
 
 class AvoidLocalEqualities(tf.keras.layers.Layer):
-    """
-        Avoid local equalities by adding a random (constant) tensor to the input tensor.
+    """ Avoid local equalities by adding a random (constant) tensor to the input tensor.
         The random values are sampled on a normal of mean 0 and standard deviation 0.001.
     """
-    def get_config(self):
-        return {}
     def build(self, input_shape):
         self.random_tensor = tf.expand_dims(tf.random.normal(input_shape[1:], mean=0, stddev=0.001), 0)
+        super().build(input_shape)
     def call(self, input_tensor):
-        return self.random_tensor+input_tensor
+        return input_tensor + self.random_tensor
 
 class PeakLocalMax(tf.keras.layers.Layer):
     def __init__(self, min_distance:int, thresholds:np.ndarray, *args, **kwargs):
-        """
-            Find peaks in a batch of images as boolean masks. Peaks are the local
+        """ Find peaks in a batch of images as boolean masks. Peaks are the local
             maxima in a region of 2 * min_distance + 1 (i.e. peaks are separated
             by at least min_distance) standing above the given thresholds.
             Multiple threshold can be provided to create ROC curves.
