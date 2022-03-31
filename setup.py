@@ -1,4 +1,12 @@
 from setuptools import setup, find_packages
+import sys
+
+platform_specific_packages = {
+    "darwin": ["tensorflow-macos", "tensorflow-metal"],
+    "linux": ["tensorflow>=2.4"],
+    "cywin": ["tensorflow>=2.4"],
+    "win3D": ["tensorflow>=2.4"],
+}
 
 setup(
     name='tf_layers',
@@ -11,7 +19,7 @@ setup(
     version='0.1.0',
     packages=find_packages(),
     install_requires=[
-        "tensorflow",
+        *platform_specific_packages[sys.platform],
         "numpy"
     ],
 )
