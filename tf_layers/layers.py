@@ -8,7 +8,7 @@ class GammaColorAugmentation(tf.keras.layers.Layer):
         self.seed = seed
         self.stddev = stddev
     def get_config(self):
-        return {"stddev": self.stddev, "seed": self.seed}
+        return {"stddev": self.stddev, "seed": self.seed, **super().get_config()}
     def call(self, input_tensor, training=True):
         if not training:
             return input_tensor
@@ -51,7 +51,7 @@ class PeakLocalMax(tf.keras.layers.Layer):
         self.thresholds = tf.convert_to_tensor(thresholds, dtype=tf.float32)
         super().__init__(*args, **kwargs)
     def get_config(self):
-        return {"min_distance": self.min_distance, "thresholds": self.thresholds}
+        return {"min_distance": self.min_distance, "thresholds": self.thresholds, **super().get_config()}
     def build(self, input_shape):
         assert len(input_shape) == 4, "Expecting a 4 dimensional tensor. Received {}".format(input_shape)
     def call(self, batch_heatmap):
@@ -172,7 +172,7 @@ class NT_Xent(tf.keras.layers.Layer):
         self.criterion = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
         self.compute_accuracy = compute_accuracy
     def get_config(self):
-        return {"tau": self.tau, "compute_accuracy": self.compute_accuracy}
+        return {"tau": self.tau, "compute_accuracy": self.compute_accuracy, **super().get_config()}
     def call(self, zizj):
         """ zizj is [B,N] tensor with order z_i1 z_j1 z_i2 z_j2 z_i3 z_j3 ...
             batch_size is twice the original batch_size
@@ -200,7 +200,7 @@ class AvgSPP(tf.keras.layers.Layer):
         super().__init__(name=name)
         self.scale = scale
     def get_config(self):
-        return {"scale": self.scale}
+        return {"scale": self.scale, **super().get_config()}
     def build(self, input_shape):
         self.shape = input_shape
     def call(self, inputs):
@@ -221,13 +221,59 @@ class Dilation2D(tf.keras.layers.Layer):
         super().__init__(**kwargs)
         self.kernel = tf.constant(kernel[:,:,np.newaxis])
     def get_config(self):
-        return {"kernel": self.kernel[:,:,0].numpy}
+        return {"kernel": self.kernel[:,:,0].numpy, **super().get_config()}
     def build(self, input_shape):
         assert len(input_shape) == 4, "Invalid shape for input. Expected a 4 dimentional tensor. Recieved {}".format(input_shape)
     def call(self, input_tensor):
         kernel = tf.cast(self.kernel, input_tensor.dtype)
         output = tf.nn.dilation2d(input_tensor, filters=kernel, strides=(1,1,1,1), dilations=(1,1,1,1), padding="SAME", data_format="NHWC")
         return output - tf.ones_like(output)
+
+
+
+class Squash(tf.keras.layers.Layer):
+    def __init__(self, axis=-1, **kwargs):
+        super().__init__(**kwargs)
+        self.axis = axis
+    def get_config(self):
+        return {"axis": self.axis}
+    def call(self, input_tensor):
+        normed_squared = tf.reduce_sum(tf.square(input_tensor), self.axis, keepdims=True)
+        scale = normed_squared / (1 + normed_squared) / tf.sqrt(normed_squared + tf.keras.backend.epsilon())
+        return scale * input_tensor
+
+class RoutedCapsuleLayer(tf.keras.layers.Layer):
+    """ Dynamic routing between capsules
+        TODO: handle convolutive capsules
+    """
+    def __init__(self, N_out, K_out, iterations=3, **kwargs):
+        super().__init__(**kwargs)
+        self.N_out = N_out
+        self.K_out = K_out
+        self.iterations = iterations
+        self.squash = Squash()
+    def get_config(self):
+        return {'N_out': self.N_out, 'K_out': self.K_out, 'iterations': self.iterations}
+    def build(self, input_shape):
+        self.N_in, self.K_in = input_shape[1:3]
+        self.W = self.add_weight(shape=[self.N_out, self.N_in,
+                                        self.K_out, self.K_in], name='W')
+    def call(self, input_capsules):
+        """ Arguments:
+                - input_capsules: a float32 tensor of shape [B, N_in, K_in]
+            Returns:
+                - output_capsule: a float32 tensor of shape [B, N_out, K_out]
+        """
+        input_capsules = tf.reshape(input_capsules, [-1, 1, self.N_in, self.K_in, 1])
+        u = tf.squeeze(tf.matmul(self.W, input_capsules))
+        b = tf.zeros(shape=[-1, self.N_out, 1, self.N_in])
+
+        for i in range(self.iterations):
+            c = tf.nn.softmax(b, axis=1)
+            v = self.squash(tf.matmul(c, u))
+            if i < self.iterations - 1:
+                b += tf.matmul(v, u, transpose_b=True)
+        return tf.squeeze(v)
 
 
 
@@ -274,6 +320,4 @@ class Dilation2D(tf.keras.layers.Layer):
 #     vals = tfp.distributions.Normal(mean, std).prob(tf.range(start=-size, limit=size+1, dtype=tf.float32))
 #     kernel = tf.einsum('i,j->ij', vals, vals)
 #     return kernel/tf.reduce_sum(kernel)
-
-
 
