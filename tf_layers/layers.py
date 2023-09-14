@@ -1,6 +1,13 @@
 import tensorflow as tf
 import numpy as np
 
+class AlexKendalMultiTaskLossWeighting(tf.keras.layers.Layer):
+    def build(self, input_shape):
+        self.log_sigmas = tf.Variable(tf.zeros(input_shape)) # more stable than using sigmas
+    def call(self, input_tensor):
+        return input_tensor / tf.math.exp(2*self.log_sigmas) + self.log_sigmas
+
+
 class GammaColorAugmentation(tf.keras.layers.Layer):
     def __init__(self, stddev, seed=0, **kwargs):
         super().__init__(**kwargs)
