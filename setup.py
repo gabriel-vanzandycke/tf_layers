@@ -16,7 +16,7 @@ setup(
     licence="LGPL",
     python_requires='>=3.6',
     description="Some tensorflow layers",
-    version='0.1.0',
+    version='0.2.0',
     packages=find_packages(),
     install_requires=[
         *platform_specific_packages[sys.platform],
